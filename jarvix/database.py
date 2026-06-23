@@ -128,6 +128,7 @@ def _initialize_sqlite(db: Any) -> None:
             provider TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'disconnected',
             display_name TEXT NOT NULL,
+            config TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
             UNIQUE(user_id, provider)
         );
@@ -146,6 +147,7 @@ def _initialize_sqlite(db: Any) -> None:
     )
     for table in TENANT_TABLES:
         _ensure_sqlite_column(db, table, "user_id", "INTEGER REFERENCES users(id) ON DELETE CASCADE")
+    _ensure_sqlite_column(db, "integrations", "config", "TEXT NOT NULL DEFAULT '{}'")
 
 
 def _initialize_postgres(db: Any) -> None:
@@ -200,6 +202,7 @@ def _initialize_postgres(db: Any) -> None:
             provider TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'disconnected',
             display_name TEXT NOT NULL,
+            config TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
             UNIQUE(user_id, provider)
         )
@@ -219,6 +222,7 @@ def _initialize_postgres(db: Any) -> None:
     ]
     for statement in statements:
         db.execute(statement)
+    db.execute("ALTER TABLE integrations ADD COLUMN IF NOT EXISTS config TEXT NOT NULL DEFAULT '{}'")
 
 
 def _ensure_sqlite_column(db: Any, table: str, column: str, definition: str) -> None:
@@ -285,13 +289,14 @@ def ensure_default_integrations(user_id: int) -> None:
             ("spotify", "Spotify"),
             ("youtube_music", "YouTube Music"),
             ("whatsapp", "WhatsApp Business"),
+            ("home_assistant", "Home Assistant"),
         ):
             if IS_POSTGRES:
                 db.execute(
                     """
                     INSERT INTO integrations
-                    (user_id, provider, status, display_name, created_at)
-                    VALUES (%s, %s, 'disconnected', %s, %s)
+                    (user_id, provider, status, display_name, config, created_at)
+                    VALUES (%s, %s, 'disconnected', %s, '{}', %s)
                     ON CONFLICT (user_id, provider) DO NOTHING
                     """,
                     (user_id, provider, label, utc_now()),
@@ -300,8 +305,8 @@ def ensure_default_integrations(user_id: int) -> None:
                 db.execute(
                     """
                     INSERT OR IGNORE INTO integrations
-                    (user_id, provider, status, display_name, created_at)
-                    VALUES (?, ?, 'disconnected', ?, ?)
+                    (user_id, provider, status, display_name, config, created_at)
+                    VALUES (?, ?, 'disconnected', ?, '{}', ?)
                     """,
                     (user_id, provider, label, utc_now()),
                 )
@@ -338,6 +343,30 @@ def insert_row(table: str, values: dict[str, Any], user_id: int) -> dict[str, An
                 (cursor.lastrowid, user_id),
             ).fetchone()
     return _decode_row(dict(row))
+
+
+def get_row(table: str, row_id: int, user_id: int) -> dict[str, Any] | None:
+    if table not in TENANT_TABLES:
+        raise ValueError("Tabela invÃ¡lida")
+    with connection() as db:
+        row = db.execute(
+            f"SELECT * FROM {table} WHERE id = {placeholder()} AND user_id = {placeholder()}",
+            (row_id, user_id),
+        ).fetchone()
+    return _decode_row(dict(row)) if row else None
+
+
+def get_integration(provider: str, user_id: int) -> dict[str, Any] | None:
+    ensure_default_integrations(user_id)
+    with connection() as db:
+        row = db.execute(
+            f"""
+            SELECT * FROM integrations
+            WHERE provider = {placeholder()} AND user_id = {placeholder()}
+            """,
+            (provider, user_id),
+        ).fetchone()
+    return _decode_row(dict(row)) if row else None
 
 
 def update_row(
@@ -402,7 +431,7 @@ def _encode_payload(values: dict[str, Any]) -> dict[str, Any]:
 
 def _decode_row(row: dict[str, Any]) -> dict[str, Any]:
     row.pop("user_id", None)
-    for field in ("metadata", "actions"):
+    for field in ("metadata", "actions", "config"):
         if field in row:
             try:
                 row[field] = json.loads(row[field])

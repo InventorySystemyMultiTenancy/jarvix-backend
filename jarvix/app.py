@@ -16,10 +16,19 @@ from .database import (
     delete_row,
     find_user_by_email,
     find_user_by_id,
+    get_integration,
+    get_row,
     initialize,
     insert_row,
     list_rows,
     update_row,
+)
+from .home_assistant import (
+    HomeAssistantError,
+    call_device_service,
+    list_entities,
+    normalize_base_url,
+    test_connection,
 )
 
 
@@ -101,6 +110,21 @@ class MediaCreate(BaseModel):
     media_type: str = Field(default="music", pattern="^(music|album|playlist)$")
 
 
+class HomeAssistantConfig(BaseModel):
+    base_url: str = Field(min_length=8, max_length=300)
+    token: str = Field(min_length=20, max_length=4096)
+
+
+class HomeAssistantImport(BaseModel):
+    entity_id: str = Field(min_length=3, max_length=160)
+    name: str = Field(default="", max_length=100)
+    room: str = Field(default="", max_length=60)
+
+
+class DeviceCommand(BaseModel):
+    command: str = Field(pattern="^(turn_on|turn_off|toggle|open|close)$")
+
+
 def current_user(authorization: Annotated[str | None, Header()] = None) -> dict[str, Any]:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Faça login para acessar o Jarvix.")
@@ -149,12 +173,13 @@ def dashboard(user: User) -> dict[str, Any]:
     devices = list_rows("devices", user_id)
     reminders = list_rows("reminders", user_id)
     routines = list_rows("routines", user_id)
+    integrations = [_public_integration(item) for item in list_rows("integrations", user_id)]
     return {
         "user": user,
         "devices": devices,
         "reminders": reminders,
         "routines": routines,
-        "integrations": list_rows("integrations", user_id),
+        "integrations": integrations,
         "media": list_rows("media_library", user_id),
         "summary": {
             "devices_online": sum(item["status"] == "online" for item in devices),
@@ -192,6 +217,94 @@ def create_media(payload: MediaCreate, user: User) -> dict[str, Any]:
     return insert_row("media_library", payload.model_dump(), int(user["id"]))
 
 
+@app.post("/api/integrations/home-assistant")
+def configure_home_assistant(payload: HomeAssistantConfig, user: User) -> dict[str, Any]:
+    user_id = int(user["id"])
+    try:
+        base_url = normalize_base_url(payload.base_url)
+        test_connection(base_url, payload.token)
+    except HomeAssistantError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    integration = get_integration("home_assistant", user_id)
+    if not integration:
+        raise HTTPException(500, "IntegraÃ§Ã£o Home Assistant nÃ£o foi inicializada.")
+    updated = update_row(
+        "integrations",
+        int(integration["id"]),
+        {
+            "status": "connected",
+            "display_name": "Home Assistant",
+            "config": {"base_url": base_url, "token": payload.token.strip()},
+        },
+        user_id,
+    )
+    return {"integration": _public_integration(updated or integration)}
+
+
+@app.get("/api/integrations/home-assistant/entities")
+def home_assistant_entities(user: User) -> dict[str, Any]:
+    config = _home_assistant_config(int(user["id"]))
+    try:
+        return {"entities": list_entities(config["base_url"], config["token"])}
+    except HomeAssistantError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.post("/api/integrations/home-assistant/import", status_code=201)
+def import_home_assistant_device(payload: HomeAssistantImport, user: User) -> dict[str, Any]:
+    user_id = int(user["id"])
+    config = _home_assistant_config(user_id)
+    try:
+        entities = list_entities(config["base_url"], config["token"])
+    except HomeAssistantError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    entity = next((item for item in entities if item["entity_id"] == payload.entity_id), None)
+    if not entity:
+        raise HTTPException(404, "Entidade nÃ£o encontrada no Home Assistant.")
+
+    status = "online" if entity["state"] not in {"unavailable", "unknown"} else "offline"
+    return insert_row(
+        "devices",
+        {
+            "name": payload.name.strip() or entity["name"],
+            "kind": entity["domain"],
+            "room": payload.room.strip(),
+            "status": status,
+            "metadata": {
+                "integration": "home_assistant",
+                "entity_id": entity["entity_id"],
+                "domain": entity["domain"],
+                "state": entity["state"],
+            },
+        },
+        user_id,
+    )
+
+
+@app.post("/api/devices/{row_id}/command")
+def command_device(row_id: int, payload: DeviceCommand, user: User) -> dict[str, Any]:
+    user_id = int(user["id"])
+    device = get_row("devices", row_id, user_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo nÃ£o encontrado.")
+    metadata = device.get("metadata") or {}
+    if metadata.get("integration") != "home_assistant" or not metadata.get("entity_id"):
+        raise HTTPException(400, "Este dispositivo ainda nÃ£o tem integraÃ§Ã£o acionÃ¡vel.")
+
+    config = _home_assistant_config(user_id)
+    try:
+        result = call_device_service(
+            config["base_url"],
+            config["token"],
+            metadata["entity_id"],
+            payload.command,
+        )
+    except HomeAssistantError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"ok": True, "device": device["name"], **result}
+
+
 @app.get("/api/sync/snapshot")
 def sync_snapshot(user: User) -> dict[str, Any]:
     user_id = int(user["id"])
@@ -201,7 +314,7 @@ def sync_snapshot(user: User) -> dict[str, Any]:
         "devices": list_rows("devices", user_id),
         "reminders": list_rows("reminders", user_id),
         "routines": list_rows("routines", user_id),
-        "integrations": list_rows("integrations", user_id),
+        "integrations": [_public_integration(item) for item in list_rows("integrations", user_id)],
         "media": list_rows("media_library", user_id),
     }
 
@@ -239,3 +352,21 @@ def _memory_context(user_id: int) -> str:
             f"Músicas/álbuns: {', '.join(item['title'] for item in media) or 'nenhum'}",
         ]
     )
+
+
+def _home_assistant_config(user_id: int) -> dict[str, str]:
+    integration = get_integration("home_assistant", user_id)
+    config = (integration or {}).get("config") or {}
+    if not config.get("base_url") or not config.get("token"):
+        raise HTTPException(400, "Configure o Home Assistant antes de importar ou controlar dispositivos.")
+    return {"base_url": config["base_url"], "token": config["token"]}
+
+
+def _public_integration(integration: dict[str, Any]) -> dict[str, Any]:
+    item = dict(integration)
+    config = dict(item.get("config") or {})
+    if "token" in config:
+        config["token_configured"] = True
+        config.pop("token", None)
+    item["config"] = config
+    return item
