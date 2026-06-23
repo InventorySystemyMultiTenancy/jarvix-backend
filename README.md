@@ -24,3 +24,19 @@ A API fica em `http://127.0.0.1:8765` e a documentação em
 
 O protótipo original foi preservado em `legacy/main.py`. Ele é apenas referência
 e não faz parte da inicialização da API.
+
+## Aplicativo desktop sincronizado
+
+O agente em `desktop/jarvix_desktop.py` baixa periodicamente `/api/sync/snapshot`
+e mantém uma memória offline em `%LOCALAPPDATA%\Jarvix\memory.json`. Alertas,
+rotinas, dispositivos e biblioteca musical cadastrados no site passam a fazer
+parte do contexto do assistente.
+
+Para gerar o aplicativo:
+
+```powershell
+cd desktop
+pip install -r requirements-desktop.txt
+$env:JARVIX_ICON="C:\caminho\jarvis.ico"
+.\build.ps1
+```

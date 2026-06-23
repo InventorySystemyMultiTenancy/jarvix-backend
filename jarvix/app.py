@@ -66,6 +66,14 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+class MediaCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    artist: str = Field(default="", max_length=120)
+    album: str = Field(default="", max_length=160)
+    provider: str = Field(default="youtube_music", max_length=40)
+    media_type: str = Field(default="music", pattern="^(music|album|playlist)$")
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "product": "Jarvix", "version": "0.1.0"}
@@ -81,6 +89,7 @@ def dashboard() -> dict[str, Any]:
         "reminders": reminders,
         "routines": routines,
         "integrations": list_rows("integrations"),
+        "media": list_rows("media_library"),
         "summary": {
             "devices_online": sum(item["status"] == "online" for item in devices),
             "pending_reminders": sum(not item["completed"] for item in reminders),
@@ -112,11 +121,31 @@ def create_routine(payload: RoutineCreate) -> dict[str, Any]:
     return insert_row("routines", payload.model_dump())
 
 
+@app.post("/api/media", status_code=201)
+def create_media(payload: MediaCreate) -> dict[str, Any]:
+    return insert_row("media_library", payload.model_dump())
+
+
+@app.get("/api/sync/snapshot")
+def sync_snapshot() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "devices": list_rows("devices"),
+        "reminders": list_rows("reminders"),
+        "routines": list_rows("routines"),
+        "integrations": list_rows("integrations"),
+        "media": list_rows("media_library"),
+    }
+
+
 @app.delete("/api/{resource}/{row_id}", status_code=204)
 def delete_resource(resource: str, row_id: int) -> None:
-    table = {"devices": "devices", "reminders": "reminders", "routines": "routines"}.get(
-        resource
-    )
+    table = {
+        "devices": "devices",
+        "reminders": "reminders",
+        "routines": "routines",
+        "media": "media_library",
+    }.get(resource)
     if not table or not delete_row(table, row_id):
         raise HTTPException(404, "Item não encontrado")
 

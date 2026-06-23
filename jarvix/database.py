@@ -79,6 +79,16 @@ def initialize() -> None:
                 display_name TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS media_library (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                artist TEXT NOT NULL DEFAULT '',
+                album TEXT NOT NULL DEFAULT '',
+                provider TEXT NOT NULL DEFAULT 'youtube_music',
+                media_type TEXT NOT NULL DEFAULT 'music',
+                created_at TEXT NOT NULL
+            );
             """
         )
 
@@ -98,7 +108,7 @@ def initialize() -> None:
 
 
 def list_rows(table: str) -> list[dict[str, Any]]:
-    allowed = {"devices", "reminders", "routines", "integrations"}
+    allowed = {"devices", "reminders", "routines", "integrations", "media_library"}
     if table not in allowed:
         raise ValueError("Tabela inválida")
     with connection() as db:
@@ -107,7 +117,7 @@ def list_rows(table: str) -> list[dict[str, Any]]:
 
 
 def insert_row(table: str, values: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"devices", "reminders", "routines"}
+    allowed = {"devices", "reminders", "routines", "media_library"}
     if table not in allowed:
         raise ValueError("Tabela inválida")
     payload = {**values, "created_at": utc_now()}
@@ -154,7 +164,7 @@ def update_row(table: str, row_id: int, values: dict[str, Any]) -> dict[str, Any
 
 
 def delete_row(table: str, row_id: int) -> bool:
-    if table not in {"devices", "reminders", "routines"}:
+    if table not in {"devices", "reminders", "routines", "media_library"}:
         raise ValueError("Tabela inválida")
     with connection() as db:
         cursor = db.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
