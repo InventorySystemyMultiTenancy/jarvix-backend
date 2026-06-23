@@ -26,6 +26,8 @@ from .database import (
 from .home_assistant import (
     HomeAssistantError,
     call_device_service,
+    get_config,
+    get_state,
     list_entities,
     normalize_base_url,
     test_connection,
@@ -223,6 +225,7 @@ def configure_home_assistant(payload: HomeAssistantConfig, user: User) -> dict[s
     try:
         base_url = normalize_base_url(payload.base_url)
         test_connection(base_url, payload.token)
+        ha_config = get_config(base_url, payload.token)
     except HomeAssistantError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -235,7 +238,13 @@ def configure_home_assistant(payload: HomeAssistantConfig, user: User) -> dict[s
         {
             "status": "connected",
             "display_name": "Home Assistant",
-            "config": {"base_url": base_url, "token": payload.token.strip()},
+            "config": {
+                "base_url": base_url,
+                "token": payload.token.strip(),
+                "location_name": ha_config.get("location_name"),
+                "version": ha_config.get("version"),
+                "time_zone": ha_config.get("time_zone"),
+            },
         },
         user_id,
     )
@@ -276,10 +285,33 @@ def import_home_assistant_device(payload: HomeAssistantImport, user: User) -> di
                 "entity_id": entity["entity_id"],
                 "domain": entity["domain"],
                 "state": entity["state"],
+                "last_updated": entity.get("last_updated"),
+                "device_class": entity.get("device_class"),
+                "commands": entity.get("commands", []),
             },
         },
         user_id,
     )
+
+
+@app.post("/api/integrations/home-assistant/sync")
+def sync_home_assistant_devices(user: User) -> dict[str, Any]:
+    user_id = int(user["id"])
+    config = _home_assistant_config(user_id)
+    synced: list[dict[str, Any]] = []
+    for device in list_rows("devices", user_id):
+        metadata = device.get("metadata") or {}
+        entity_id = metadata.get("entity_id")
+        if metadata.get("integration") != "home_assistant" or not entity_id:
+            continue
+        try:
+            state = get_state(config["base_url"], config["token"], entity_id)
+        except HomeAssistantError:
+            continue
+        updated = _update_device_home_assistant_state(device, state, user_id)
+        if updated:
+            synced.append(updated)
+    return {"synced": len(synced), "devices": synced}
 
 
 @app.post("/api/devices/{row_id}/command")
@@ -302,7 +334,10 @@ def command_device(row_id: int, payload: DeviceCommand, user: User) -> dict[str,
         )
     except HomeAssistantError as exc:
         raise HTTPException(502, str(exc)) from exc
-    return {"ok": True, "device": device["name"], **result}
+    updated_device = None
+    if result.get("state"):
+        updated_device = _update_device_home_assistant_state(device, result["state"], user_id)
+    return {"ok": True, "device": updated_device or device, **result}
 
 
 @app.get("/api/sync/snapshot")
@@ -370,3 +405,27 @@ def _public_integration(integration: dict[str, Any]) -> dict[str, Any]:
         config.pop("token", None)
     item["config"] = config
     return item
+
+
+def _update_device_home_assistant_state(
+    device: dict[str, Any], state: dict[str, Any], user_id: int
+) -> dict[str, Any] | None:
+    metadata = {**(device.get("metadata") or {})}
+    metadata.update(
+        {
+            "state": state.get("state", "unknown"),
+            "last_updated": state.get("last_updated"),
+            "last_changed": state.get("last_changed"),
+            "attributes": state.get("attributes", {}),
+        }
+    )
+    status = "offline" if state.get("state") in {"unavailable", "unknown"} else "online"
+    return update_row(
+        "devices",
+        int(device["id"]),
+        {
+            "status": status,
+            "metadata": metadata,
+        },
+        user_id,
+    )
