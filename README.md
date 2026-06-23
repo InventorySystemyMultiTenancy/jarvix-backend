@@ -38,5 +38,13 @@ Para gerar o aplicativo:
 cd desktop
 pip install -r requirements-desktop.txt
 $env:JARVIX_ICON="C:\caminho\jarvis.ico"
-.\build.ps1
+powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
+
+O executável abre a interface em um servidor local (`127.0.0.1`) no navegador
+padrão. Essa arquitetura não depende de `pythonnet/.NET` e funciona com Python
+3.13.
+
+Executáveis PyInstaller sem certificado são exibidos como desconhecidos pelo
+Microsoft SmartScreen. Uma distribuição comercial deve assinar o instalador e
+o `.exe` com certificado de assinatura de código e timestamp.

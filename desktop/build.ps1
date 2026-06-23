@@ -1,5 +1,13 @@
 $ErrorActionPreference = "Stop"
 $icon = if ($env:JARVIX_ICON) { $env:JARVIX_ICON } else { "" }
+$python = if ($env:JARVIX_BUILD_PYTHON) {
+    $env:JARVIX_BUILD_PYTHON
+} elseif (Test-Path -LiteralPath "..\..\.venv\Scripts\python.exe") {
+    Resolve-Path "..\..\.venv\Scripts\python.exe"
+} else {
+    "python"
+}
+
 $arguments = @(
     "--noconfirm",
     "--onedir",
@@ -9,10 +17,5 @@ $arguments = @(
 )
 if ($icon -and (Test-Path -LiteralPath $icon)) {
     $arguments = @("--icon", $icon) + $arguments
-}
-$python = if (Test-Path -LiteralPath "..\..\.venv\Scripts\python.exe") {
-    Resolve-Path "..\..\.venv\Scripts\python.exe"
-} else {
-    "python"
 }
 & $python -m PyInstaller @arguments
