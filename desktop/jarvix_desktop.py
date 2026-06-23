@@ -6,7 +6,6 @@ import os
 import tempfile
 import threading
 import time
-import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +15,7 @@ import edge_tts
 import pygame
 import requests
 import speech_recognition as sr
+import webview
 
 
 SYNC_INTERVAL = int(os.getenv("JARVIX_SYNC_INTERVAL", "15"))
@@ -236,5 +236,6 @@ if __name__ == "__main__":
     threading.Thread(target=jarvix.background_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", LOCAL_PORT), Handler)
     url = f"http://127.0.0.1:{server.server_port}"
-    threading.Timer(1, lambda: webbrowser.open(url)).start()
-    server.serve_forever()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    webview.create_window("Jarvix", url, width=1280, height=860)
+    webview.start()

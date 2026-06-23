@@ -65,6 +65,9 @@ $env:JARVIX_ICON="C:\caminho\jarvis.ico"
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
+O build gera um executável único `Jarvix.exe`, que abre em uma janela nativa
+embutida e não força o navegador.
+
 Executáveis PyInstaller sem certificado são exibidos como desconhecidos pelo
 Microsoft SmartScreen. Uma distribuição comercial deve assinar o instalador e o
 `.exe` com certificado de assinatura de código e timestamp.

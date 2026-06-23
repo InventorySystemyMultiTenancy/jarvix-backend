@@ -10,7 +10,7 @@ $python = if ($env:JARVIX_BUILD_PYTHON) {
 
 $arguments = @(
     "--noconfirm",
-    "--onedir",
+    "--onefile",
     "--windowed",
     "--name", "Jarvix",
     "jarvix_desktop.py"
