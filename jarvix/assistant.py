@@ -52,6 +52,13 @@ def answer(message: str, memory_context: str = "") -> dict[str, str]:
             "mode": "setup",
         }
 
+    client = OpenAI(api_key=api_key)
+    needs_web = should_search_web(message)
+    if needs_web:
+        web_answer = answer_with_openai_web_search(client, message, memory_context)
+        if web_answer:
+            return {"text": web_answer, "mode": "ai_openai_web"}
+
     web_context = web_search_context(message)
     extra_context = []
     if memory_context:
@@ -63,13 +70,37 @@ def answer(message: str, memory_context: str = "") -> dict[str, str]:
     if extra_context:
         instructions = f"{SYSTEM_PROMPT}\n\n" + "\n\n".join(extra_context)
 
-    client = OpenAI(api_key=api_key)
     response = client.responses.create(
         model=os.getenv("OPENAI_MODEL", "gpt-5-mini"),
         instructions=instructions,
         input=message,
     )
     return {"text": response.output_text, "mode": "ai_web" if web_context else "ai"}
+
+
+def answer_with_openai_web_search(client: OpenAI, message: str, memory_context: str = "") -> str:
+    extra_context = []
+    if memory_context:
+        extra_context.append(f"Memoria sincronizada deste cliente:\n{memory_context}")
+    instructions = (
+        f"{SYSTEM_PROMPT}\n\n"
+        "Para perguntas sobre fatos atuais, placares, noticias, datas recentes ou dados variaveis, "
+        "pesquise na web imediatamente. Nao pergunte ao usuario se deve pesquisar; pesquise e responda. "
+        "Se encontrar fontes conflitantes, diga a incerteza de forma direta."
+    )
+    if extra_context:
+        instructions += "\n\n" + "\n\n".join(extra_context)
+
+    try:
+        response = client.responses.create(
+            model=os.getenv("OPENAI_WEB_MODEL", os.getenv("OPENAI_MODEL", "gpt-5-mini")),
+            instructions=instructions,
+            input=message,
+            tools=[{"type": "web_search_preview"}],
+        )
+        return response.output_text.strip()
+    except Exception:
+        return ""
 
 
 def web_search_context(message: str) -> str:
